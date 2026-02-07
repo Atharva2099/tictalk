@@ -1,38 +1,32 @@
 # TicTalk - Voice Chat with Cartesia Line + Claude
 
-Voice chat app: React + shadcn frontend, FastAPI backend. Uses Cartesia Line SDK for real-time voice (STT, LLM, TTS) and POST /api/chat for text fallback.
+Voice chat: React + shadcn frontend, FastAPI backend. Cartesia Line SDK for real-time voice (STT, LLM, TTS) and POST /api/chat for text fallback.
 
 ## Setup
 
 ### Backend
 
-Python 3.11 or 3.12 required.
+Python 3.11 or 3.12 required. Uses [uv](https://docs.astral.sh/uv/) for package management.
 
 ```bash
 cd backend
 uv sync
 cp .env.example .env
-# Edit .env with CARTESIA_API_KEY and ANTHROPIC_API_KEY
+# Edit .env: CARTESIA_API_KEY, ANTHROPIC_API_KEY
 ```
 
 ### Deploy Cartesia Line Agent (for voice)
 
-The frontend connects to Cartesia's Calls API for voice. Deploy your agent to get an agent ID:
+The frontend connects to Cartesia's Calls API for voice. Deploy to get an agent ID:
 
 ```bash
 cd backend
-cartesia init   # Choose "Create new" and name your agent
-# Point entry to main_line.py if prompted, or run: uv run python main_line.py
-cartesia deploy
-```
-
-Set env vars for the deployed agent:
-
-```bash
+cartesia init   # Create new agent, name it
+cartesia deploy # Entry: main_line.py or uv run python main_line.py
 cartesia env set ANTHROPIC_API_KEY=your-key
 ```
 
-Get the agent ID from the deploy output or Cartesia Console. You will need it for the frontend.
+Get the agent ID from the deploy output or [Cartesia Console](https://play.cartesia.ai/agents).
 
 ### Frontend
 
@@ -43,13 +37,15 @@ cp .env.example .env
 # Edit .env: VITE_API_URL=http://localhost:8000, VITE_CARTESIA_AGENT_ID=your-agent-id
 ```
 
-### Run
+## Run
+
+From project root:
 
 ```bash
-# Terminal 1 - backend (from project root)
+# Terminal 1 - backend (port 8000)
 ./run-backend.sh
 
-# Terminal 2 - frontend
+# Terminal 2 - frontend (port 5173)
 cd frontend && npm run dev
 ```
 
@@ -57,12 +53,10 @@ Open http://localhost:5173
 
 ## Usage
 
-- **Type** a message and press Enter or click Send (uses POST /api/chat)
-- **Hold** the mic button to talk, release to send (uses Cartesia Line Calls API)
-
-The backend provides the token endpoint for secure client access to Cartesia.
+- **Type** and Send: uses POST /api/chat (Claude + Cartesia TTS)
+- **Hold mic** to talk, release to send: uses Cartesia Line Calls API
 
 ## Troubleshooting
 
-- **VITE_CARTESIA_AGENT_ID not configured**: Deploy the Line agent with `cartesia deploy` and set the agent ID in frontend .env
-- **python-multipart required**: Use `./run-backend.sh` or `cd backend && uv run uvicorn src.main:app --reload` so that uv run uses the backend environment
+- **VITE_CARTESIA_AGENT_ID not configured**: Deploy with `cartesia deploy`, set agent ID in frontend .env
+- **python-multipart required**: Run backend via `./run-backend.sh` or `cd backend && uv run uvicorn src.main:app --reload`
