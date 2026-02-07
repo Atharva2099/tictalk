@@ -1,14 +1,91 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { ChatMessage, type Message } from "@/components/ChatMessage"
-import { VoiceInput } from "@/components/VoiceInput"
+import { VoiceInput, type StreamingEvent } from "@/components/VoiceInput"
+import { pcmBase64ToWavBase64 } from "@/audio/pcmToWav"
+import { createStreamingPlayer } from "@/audio/StreamingAudioPlayer"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
 const API_URL = import.meta.env.VITE_API_URL || ""
+const TTS_SAMPLE_RATE = 44100
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
+  const streamingUserMsgIdRef = useRef<string | null>(null)
+  const streamingAssistantMsgIdRef = useRef<string | null>(null)
+  const streamingAudioChunksRef = useRef<string[]>([])
+  const streamingPlayerRef = useRef(createStreamingPlayer())
+
+  const streamAudioChunk = (chunkBase64: string) => {
+    streamingAudioChunksRef.current.push(chunkBase64)
+    streamingPlayerRef.current.playChunk(chunkBase64)
+  }
+
+  const handleStreaming = (event: StreamingEvent) => {
+    if (event.type === "start") {
+      streamingPlayerRef.current.unlock()
+      setLoading(true)
+      const userMsgId = crypto.randomUUID()
+      streamingUserMsgIdRef.current = userMsgId
+      streamingAudioChunksRef.current = []
+      streamingPlayerRef.current.reset()
+      setMessages((prev) => [
+        ...prev,
+        { id: userMsgId, role: "user", text: event.text ?? "(recording...)" },
+      ])
+    } else if (event.type === "transcript") {
+      const id = streamingUserMsgIdRef.current
+      if (id)
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, text: event.text } : m))
+        )
+    } else if (event.type === "text") {
+      const id = streamingAssistantMsgIdRef.current
+      if (id) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, text: event.text } : m))
+        )
+      } else {
+        const assistantMsgId = crypto.randomUUID()
+        streamingAssistantMsgIdRef.current = assistantMsgId
+        setMessages((prev) => [
+          ...prev,
+          { id: assistantMsgId, role: "assistant", text: event.text },
+        ])
+      }
+    } else if (event.type === "audio_chunk") {
+      streamAudioChunk(event.data)
+    } else if (event.type === "done") {
+      const id = streamingAssistantMsgIdRef.current
+      const chunks = streamingAudioChunksRef.current
+      if (id && chunks.length > 0) {
+        const pcmBase64 = chunks.join("")
+        const audioBase64 = pcmBase64ToWavBase64(pcmBase64, TTS_SAMPLE_RATE)
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, audioBase64 } : m
+          )
+        )
+      }
+      streamingUserMsgIdRef.current = null
+      streamingAssistantMsgIdRef.current = null
+      streamingAudioChunksRef.current = []
+      setLoading(false)
+    } else if (event.type === "error") {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          text: `Error: ${event.error}`,
+        },
+      ])
+      streamingUserMsgIdRef.current = null
+      streamingAssistantMsgIdRef.current = null
+      setLoading(false)
+    }
+  }
 
   const sendMessage = async (text: string, audioBlob?: Blob) => {
     setLoading(true)
@@ -41,6 +118,7 @@ function App() {
 
       const data = await res.json()
       const transcript = data.transcript
+      const audioBase64 = data.audio || undefined
       setMessages((prev) => {
         const updated = transcript
           ? prev.map((m) =>
@@ -53,10 +131,15 @@ function App() {
             id: crypto.randomUUID(),
             role: "assistant",
             text: data.text,
-            audioBase64: data.audio || undefined,
+            audioBase64,
           },
         ]
       })
+      if (audioBase64) {
+        streamingPlayerRef.current.unlock()
+        const audio = new Audio(`data:audio/wav;base64,${audioBase64}`)
+        audio.play()
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -100,7 +183,13 @@ function App() {
             </div>
           </ScrollArea>
           <div className="p-4 border-t">
-            <VoiceInput onSend={sendMessage} disabled={loading} />
+            <VoiceInput
+              onSend={sendMessage}
+              onStreaming={handleStreaming}
+              onStreamEnd={() => setLoading(false)}
+              onUnlock={() => streamingPlayerRef.current.unlock()}
+              disabled={loading}
+            />
           </div>
         </CardContent>
       </Card>

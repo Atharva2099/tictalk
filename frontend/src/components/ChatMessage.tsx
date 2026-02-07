@@ -1,4 +1,3 @@
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Mic, Volume2 } from "lucide-react"
 
@@ -15,12 +14,6 @@ interface ChatMessageProps {
 }
 
 export function ChatMessage({ message, className }: ChatMessageProps) {
-  const playAudio = () => {
-    if (!message.audioBase64) return
-    const audio = new Audio(`data:audio/wav;base64,${message.audioBase64}`)
-    audio.play()
-  }
-
   return (
     <div
       className={cn(
@@ -43,17 +36,6 @@ export function ChatMessage({ message, className }: ChatMessageProps) {
           {message.role === "user" ? "You" : "Assistant"}
         </p>
         <p className="text-sm whitespace-pre-wrap">{message.text}</p>
-        {message.role === "assistant" && message.audioBase64 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-2"
-            onClick={playAudio}
-          >
-            <Volume2 className="h-4 w-4 mr-2" />
-            Play
-          </Button>
-        )}
       </div>
     </div>
   )
