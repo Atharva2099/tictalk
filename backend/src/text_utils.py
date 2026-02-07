@@ -46,22 +46,3 @@ def strip_markdown_for_tts(text: str) -> str:
     text = text.replace("×", " times ")
     text = text.replace("√", " square root ")
     return " ".join(text.split())
-
-
-def extract_sentences(buf: str) -> tuple[list[str], str]:
-    """Extract complete phrases/sentences from buffer. Splits on .,!?; and newlines
-    for smaller TTS chunks and smoother audio. Returns (phrases, remainder)."""
-    result: list[str] = []
-    remainder = buf
-    while True:
-        m = re.search(r".*?[.!?;\n]", remainder, re.DOTALL)
-        if not m:
-            break
-        s = m.group(0).strip()
-        if s:
-            result.append(s)
-        remainder = remainder[m.end() :].lstrip()
-    if len(remainder) >= 60:
-        result.append(remainder.strip())
-        remainder = ""
-    return result, remainder
