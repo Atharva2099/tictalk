@@ -5,6 +5,7 @@ import time
 from anthropic import AsyncAnthropic
 
 from .config import ANTHROPIC_API_KEY, log, log_latency
+from .system_prompts import CLAUDE_SYSTEM_PROMPT
 from .text_utils import extract_sentences
 
 
@@ -16,6 +17,7 @@ async def chat(user_message: str) -> str:
     client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     msg = await client.messages.create(
         model="claude-haiku-4-5",
+        system=CLAUDE_SYSTEM_PROMPT,
         max_tokens=1024,
         messages=[{"role": "user", "content": user_message}],
     )
@@ -36,6 +38,7 @@ async def stream_sentences(user_message: str):
 
     async with client.messages.stream(
         model="claude-haiku-4-5",
+        system=CLAUDE_SYSTEM_PROMPT,
         max_tokens=1024,
         messages=[{"role": "user", "content": user_message}],
     ) as stream:

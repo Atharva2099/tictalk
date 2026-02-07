@@ -5,6 +5,7 @@ description = "Cartesia + Claude voice chat backend"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "cartesia-line>=0.2.0",
     "fastapi>=0.115.0",
     "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.32.0",

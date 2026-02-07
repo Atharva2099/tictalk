@@ -26,6 +26,8 @@ function App() {
     if (event.type === "start") {
       streamingPlayerRef.current.unlock()
       setLoading(true)
+      streamingUserMsgIdRef.current = null
+      streamingAssistantMsgIdRef.current = null
       const userMsgId = crypto.randomUUID()
       streamingUserMsgIdRef.current = userMsgId
       streamingAudioChunksRef.current = []
@@ -54,7 +56,17 @@ function App() {
           { id: assistantMsgId, role: "assistant", text: event.text },
         ])
       }
+    } else if (event.type === "clear") {
+      streamingPlayerRef.current.reset()
     } else if (event.type === "audio_chunk") {
+      if (!streamingAssistantMsgIdRef.current) {
+        const assistantMsgId = crypto.randomUUID()
+        streamingAssistantMsgIdRef.current = assistantMsgId
+        setMessages((prev) => [
+          ...prev,
+          { id: assistantMsgId, role: "assistant", text: "..." },
+        ])
+      }
       streamAudioChunk(event.data)
     } else if (event.type === "done") {
       const id = streamingAssistantMsgIdRef.current
@@ -155,34 +167,34 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col p-4 max-w-2xl mx-auto">
-      <Card className="flex-1 flex flex-col min-h-0">
-        <CardHeader>
-          <h1 className="text-xl font-semibold">TicTalk</h1>
-          <p className="text-sm text-muted-foreground">
-            Voice chat with Cartesia + Claude. Type or hold mic to speak.
+    <div className="min-h-screen flex flex-col p-4 max-w-2xl mx-auto bg-white text-black">
+      <Card className="flex-1 flex flex-col min-h-0 border-2 border-black shadow-none bg-white">
+        <CardHeader className="border-b-2 border-black">
+          <h1 className="text-xl font-black tracking-wide">TicTalk</h1>
+          <p className="text-sm">
+            Voice chat with Cartesia + Claude. Type or press mic to talk (stops when you stop speaking).
           </p>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-          <ScrollArea className="flex-1 p-4 min-h-[300px]">
+          <ScrollArea className="flex-1 p-4 min-h-[300px] bg-white">
             <div className="space-y-4">
               {messages.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  No messages yet. Type something or hold the mic to speak.
+                <p className="text-sm text-center py-8">
+                  No messages yet. Type something or press the mic to talk.
                 </p>
               )}
               {messages.map((m) => (
                 <ChatMessage key={m.id} message={m} />
               ))}
               {loading && (
-                <div className="flex gap-3 p-3 rounded-lg bg-primary/5 mr-8">
-                  <div className="animate-pulse h-4 w-4 rounded bg-muted" />
-                  <p className="text-sm text-muted-foreground">Thinking...</p>
+                <div className="flex gap-3 p-3 border-2 border-black bg-white mr-8">
+                  <div className="animate-pulse h-4 w-4 rounded bg-black" />
+                  <p className="text-sm">Thinking...</p>
                 </div>
               )}
             </div>
           </ScrollArea>
-          <div className="p-4 border-t">
+          <div className="p-4 border-t-2 border-black bg-white">
             <VoiceInput
               onSend={sendMessage}
               onStreaming={handleStreaming}

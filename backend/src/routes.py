@@ -4,13 +4,14 @@ import base64
 import time
 from datetime import datetime
 
-from fastapi import HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import HTTPException, UploadFile, File, Form
 
-from .claude import chat as claude_chat, stream_sentences as claude_stream_sentences
-from .config import CARTESIA_API_KEY, ANTHROPIC_API_KEY, log, log_latency
-from .stt import transcribe as stt_transcribe, stream_transcribe as stt_stream_transcribe
+from .claude import chat as claude_chat
+from .config import CARTESIA_API_KEY, ANTHROPIC_API_KEY, CARTESIA_VERSION, log, log_latency
+from .stt import transcribe as stt_transcribe
 from .text_utils import strip_markdown_for_tts
-from .tts import synthesize as tts_synthesize, stream_synthesize as tts_stream_synthesize
+from .tts import synthesize as tts_synthesize
 
 
 def register_routes(app):
@@ -19,6 +20,36 @@ def register_routes(app):
     @app.get("/api/health")
     async def health():
         return {"ok": True, "timestamp": datetime.now().isoformat()}
+
+    @app.post("/api/access-token")
+    async def access_token():
+        """Return a short-lived Cartesia access token for the Calls API."""
+        if not CARTESIA_API_KEY:
+            raise HTTPException(
+                status_code=500,
+                detail="Missing CARTESIA_API_KEY",
+            )
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.cartesia.ai/access-token",
+                headers={
+                    "Authorization": f"Bearer {CARTESIA_API_KEY}",
+                    "Cartesia-Version": CARTESIA_VERSION,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "grants": {"agent": True},
+                    "expires_in": 300,
+                },
+                timeout=10.0,
+            )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Token request failed: {resp.text}",
+            )
+        data = resp.json()
+        return {"token": data.get("token", "")}
 
     @app.post("/api/chat")
     async def chat(
@@ -56,76 +87,3 @@ def register_routes(app):
             "text": response_text,
             "audio": base64.b64encode(audio_bytes).decode() if audio_bytes else "",
         }
-
-    @app.websocket("/api/ws/chat")
-    async def ws_chat(websocket: WebSocket):
-        """WebSocket for streaming voice/text chat."""
-        await websocket.accept()
-
-        if not CARTESIA_API_KEY or not ANTHROPIC_API_KEY:
-            await websocket.send_json({"type": "error", "error": "Missing API keys"})
-            await websocket.close()
-            return
-
-        pcm_chunks: list[bytes] = []
-        sample_rate = 16000
-        user_message = ""
-        t_ws = time.perf_counter()
-
-        try:
-            while True:
-                data = await websocket.receive_json()
-                msg_type = data.get("type")
-
-                if msg_type == "audio_chunk":
-                    chunk_b64 = data.get("data", "")
-                    if chunk_b64:
-                        pcm_chunks.append(base64.b64decode(chunk_b64))
-                elif msg_type == "audio_end":
-                    sample_rate = data.get("sample_rate", 16000)
-                    break
-                elif msg_type == "text":
-                    user_text = data.get("text", "").strip()
-                    if user_text:
-                        user_message = user_text
-                        log(f"WS text: {user_message[:80]}...", "API")
-                    break
-
-            if not user_message:
-                if not pcm_chunks:
-                    await websocket.send_json({"type": "error", "error": "No audio or text received"})
-                    await websocket.close()
-                    return
-                user_message = await stt_stream_transcribe(pcm_chunks, sample_rate=sample_rate)
-                if not user_message:
-                    await websocket.send_json({"type": "error", "error": "Could not transcribe audio"})
-                    await websocket.close()
-                    return
-                await websocket.send_json({"type": "transcript", "text": user_message})
-
-            full_text = ""
-            async for sentence in claude_stream_sentences(user_message):
-                full_text = (full_text + " " + sentence) if full_text else sentence
-                await websocket.send_json({"type": "text", "text": full_text})
-                if len(sentence.strip()) >= 2:
-                    tts_text = strip_markdown_for_tts(sentence)
-                    if tts_text.strip():
-                        async for chunk_b64 in tts_stream_synthesize(tts_text):
-                            await websocket.send_json({"type": "audio_chunk", "data": chunk_b64})
-
-            await websocket.send_json({"type": "done"})
-            log_latency("WebSocket /api/ws/chat total", (time.perf_counter() - t_ws) * 1000)
-
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            log(f"WS error: {e}", "API")
-            try:
-                await websocket.send_json({"type": "error", "error": str(e)})
-            except Exception:
-                pass
-        finally:
-            try:
-                await websocket.close()
-            except Exception:
-                pass

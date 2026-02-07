@@ -1,10 +1,10 @@
 /**
  * AudioWorklet processor for capturing raw PCM from the microphone.
- * Converts Float32 to Int16 and downsamples to 16kHz for Cartesia STT.
+ * Converts Float32 to Int16. Uses 44.1kHz for Cartesia Calls API (web client standard).
  */
 /// <reference path="./audio-worklet.d.ts" />
 
-const SAMPLE_RATE_OUT = 16000
+const SAMPLE_RATE_OUT = 44100
 const CHUNK_MS = 100
 const SAMPLES_PER_CHUNK = (SAMPLE_RATE_OUT * CHUNK_MS) / 1000
 

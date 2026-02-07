@@ -1,9 +1,9 @@
 /**
- * Captures raw PCM from the microphone at 16kHz via AudioWorklet.
- * Used for streaming STT with Cartesia.
+ * Captures raw PCM from the microphone at 44.1kHz via AudioWorklet.
+ * Used for Cartesia Calls API (web client standard).
  */
 
-const SAMPLE_RATE = 16000
+const SAMPLE_RATE = 44100
 
 export interface PcmCaptureOptions {
   onChunk: (pcmData: ArrayBuffer) => void

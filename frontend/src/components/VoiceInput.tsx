@@ -1,15 +1,19 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 import { Mic, Send, Square } from "lucide-react"
 import { PcmCapture } from "@/audio/PcmCapture"
 
 const API_URL = import.meta.env.VITE_API_URL || ""
+const CARTESIA_AGENT_ID = import.meta.env.VITE_CARTESIA_AGENT_ID || ""
+const CARTESIA_VERSION = "2025-04-16"
 
 export type StreamingEvent =
   | { type: "start"; text?: string }
   | { type: "transcript" | "text"; text: string }
   | { type: "audio_chunk"; data: string }
+  | { type: "clear" }
   | { type: "done" }
   | { type: "error"; error: string }
 
@@ -28,6 +32,7 @@ export function VoiceInput({ onSend, onStreaming, onStreamEnd, onUnlock, disable
   const chunksRef = useRef<Blob[]>([])
   const pcmCaptureRef = useRef<PcmCapture | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const streamIdRef = useRef<string | null>(null)
   const streamEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const clearStreamEndTimeout = () => {
@@ -49,66 +54,106 @@ export function VoiceInput({ onSend, onStreaming, onStreamEnd, onUnlock, disable
     }
     pcmCaptureRef.current?.stop()
     pcmCaptureRef.current = null
-    const ws = wsRef.current
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "audio_end", sample_rate: 16000 }))
-    }
     setRecording(false)
   }
 
-  useEffect(() => {
-    if (!recording) return
-    const handleUp = () => stopRecording()
-    window.addEventListener("mouseup", handleUp)
-    window.addEventListener("touchend", handleUp)
-    return () => {
-      window.removeEventListener("mouseup", handleUp)
-      window.removeEventListener("touchend", handleUp)
-    }
-  }, [recording])
+  const closeLineWs = () => {
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close()
+    wsRef.current = null
+    streamIdRef.current = null
+  }
 
-  const startStreamingRecording = async () => {
-    if (!onStreaming) return
+  const handleMicToggle = () => {
+    if (recording) {
+      stopRecording()
+      // Do not close WS - keep connection open to receive agent response
+    } else {
+      closeLineWs()
+      startRecording()
+    }
+  }
+
+  const startLineVoiceRecording = async () => {
+    if (!onStreaming || !CARTESIA_AGENT_ID) {
+      if (!CARTESIA_AGENT_ID) {
+        onStreaming?.({ type: "error", error: "VITE_CARTESIA_AGENT_ID not configured" })
+      }
+      return
+    }
+    closeLineWs()
+    setRecording(true)
     onStreaming({ type: "start" })
-    streamEndTimeoutRef.current = setTimeout(scheduleStreamEnd, 90000)
+    streamEndTimeoutRef.current = setTimeout(scheduleStreamEnd, 180000)
+
     const base = API_URL || ""
-    const wsUrl = base ? `${base.replace(/^http/, "ws")}/api/ws/chat` : `ws://${location.host}/api/ws/chat`
+    const tokenUrl = base ? `${base}/api/access-token` : "/api/access-token"
+    let token: string
+    try {
+      const resp = await fetch(tokenUrl, { method: "POST" })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error(err.detail || `Token request failed: ${resp.status}`)
+      }
+      const data = await resp.json()
+      token = data.token || ""
+      if (!token) throw new Error("No token in response")
+    } catch (err) {
+      stopRecording()
+      onStreaming({ type: "error", error: err instanceof Error ? err.message : "Failed to get token" })
+      return
+    }
+
+    const wsUrl = `wss://api.cartesia.ai/agents/stream/${CARTESIA_AGENT_ID}?access_token=${encodeURIComponent(token)}&cartesia_version=${CARTESIA_VERSION}`
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
-    ws.onopen = async () => {
-      const capture = new PcmCapture()
-      pcmCaptureRef.current = capture
-      await capture.start({
-        onChunk: (buf) => {
-          if (ws.readyState === WebSocket.OPEN) {
+    const startPcmCapture = () => {
+      const pcm = new PcmCapture()
+      pcmCaptureRef.current = pcm
+      pcm.start({
+        onChunk: (buf: ArrayBuffer) => {
+          const w = wsRef.current
+          const s = streamIdRef.current
+          if (w?.readyState === WebSocket.OPEN && s) {
             const bytes = new Uint8Array(buf)
-            let binary = ""
-            for (let i = 0; i < bytes.length; i += 8192) {
-              binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 8192)))
-            }
-            ws.send(JSON.stringify({ type: "audio_chunk", data: btoa(binary) }))
+            const binary = String.fromCharCode.apply(null, Array.from(bytes))
+            w.send(
+              JSON.stringify({
+                event: "media_input",
+                stream_id: s,
+                media: { payload: btoa(binary) },
+              })
+            )
           }
         },
-        onError: (err) => onStreaming({ type: "error", error: err.message }),
+        onError: (err) => {
+          stopRecording()
+          onStreaming({ type: "error", error: err.message })
+          closeLineWs()
+        },
       })
+    }
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          event: "start",
+          config: { input_format: "pcm_44100" },
+        })
+      )
     }
 
     ws.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data)
-        if (msg.type === "transcript" || msg.type === "text") {
-          onStreaming({ type: msg.type, text: msg.text })
-        } else if (msg.type === "audio_chunk") {
-          onStreaming({ type: "audio_chunk", data: msg.data })
-        } else if (msg.type === "done") {
-          clearStreamEndTimeout()
-          onStreaming({ type: "done" })
-          ws.close()
-        } else if (msg.type === "error") {
-          clearStreamEndTimeout()
-          onStreaming({ type: "error", error: msg.error })
-          ws.close()
+        const data = JSON.parse(e.data)
+        if (data.event === "ack") {
+          streamIdRef.current = data.stream_id ?? null
+          startPcmCapture()
+        } else if (data.event === "media_output" && data.media?.payload) {
+          onStreaming({ type: "audio_chunk", data: data.media.payload })
+        } else if (data.event === "clear") {
+          onStreaming({ type: "clear" })
         }
       } catch {
         // ignore parse errors
@@ -118,14 +163,20 @@ export function VoiceInput({ onSend, onStreaming, onStreamEnd, onUnlock, disable
     ws.onerror = () => {
       clearStreamEndTimeout()
       onStreaming({ type: "error", error: "WebSocket error" })
-      ws.close()
-    }
-    ws.onclose = () => {
-      wsRef.current = null
-      scheduleStreamEnd()
+      closeLineWs()
+      stopRecording()
     }
 
-    setRecording(true)
+    ws.onclose = () => {
+      closeLineWs()
+      clearStreamEndTimeout()
+      onStreaming({ type: "done" })
+      scheduleStreamEnd()
+    }
+  }
+
+  const startLineRecording = () => {
+    startLineVoiceRecording()
   }
 
   const startBatchRecording = async () => {
@@ -156,69 +207,18 @@ export function VoiceInput({ onSend, onStreaming, onStreamEnd, onUnlock, disable
 
   const startRecording = async () => {
     if (onStreaming) {
-      await startStreamingRecording()
+      await startLineRecording()
     } else {
       await startBatchRecording()
     }
-  }
-
-  const sendTextViaStreaming = (toSend: string) => {
-    if (!onStreaming) return
-    onStreaming({ type: "start", text: toSend })
-    streamEndTimeoutRef.current = setTimeout(scheduleStreamEnd, 90000)
-    const base = API_URL || ""
-    const wsUrl = base ? `${base.replace(/^http/, "ws")}/api/ws/chat` : `ws://${location.host}/api/ws/chat`
-    const ws = new WebSocket(wsUrl)
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "text", text: toSend }))
-    }
-
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data)
-        if (msg.type === "transcript" || msg.type === "text") {
-          onStreaming({ type: msg.type, text: msg.text })
-        } else if (msg.type === "audio_chunk") {
-          onStreaming({ type: "audio_chunk", data: msg.data })
-        } else if (msg.type === "done") {
-          clearStreamEndTimeout()
-          onStreaming({ type: "done" })
-          ws.close()
-        } else if (msg.type === "error") {
-          clearStreamEndTimeout()
-          onStreaming({ type: "error", error: msg.error })
-          ws.close()
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    ws.onerror = () => {
-      clearStreamEndTimeout()
-      onStreaming({ type: "error", error: "WebSocket error" })
-      ws.close()
-    }
-    ws.onclose = () => {
-      wsRef.current = null
-      scheduleStreamEnd()
-    }
-
-    wsRef.current = ws
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const toSend = text.trim()
     if (!toSend) return
-    if (onStreaming) {
-      sendTextViaStreaming(toSend)
-      setText("")
-    } else {
-      await onSend(toSend)
-      setText("")
-    }
+    await onSend(toSend)
+    setText("")
   }
 
   return (
@@ -226,22 +226,24 @@ export function VoiceInput({ onSend, onStreaming, onStreamEnd, onUnlock, disable
       <Input
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Type or hold mic to speak..."
+        placeholder={
+          onStreaming
+            ? "Type or hold mic to talk (Cartesia Line)"
+            : "Type or press mic to record"
+        }
         disabled={disabled || recording}
-        className="flex-1"
+        className="flex-1 border-2 border-black bg-white text-black placeholder:text-gray-500 focus-visible:ring-0"
       />
       <Button
         type="button"
-        variant={recording ? "destructive" : "outline"}
+        variant="outline"
         size="icon"
-        onMouseDown={recording ? undefined : startRecording}
-        onTouchStart={(e) => {
-          if (!recording) {
-            e.preventDefault()
-            startRecording()
-          }
-        }}
+        onClick={handleMicToggle}
         disabled={disabled}
+        className={cn(
+          "border-2 border-black bg-white text-black hover:bg-black hover:text-white",
+          recording && "bg-black text-white hover:bg-black"
+        )}
       >
         {recording ? (
           <Square className="h-4 w-4" />
@@ -254,6 +256,7 @@ export function VoiceInput({ onSend, onStreaming, onStreamEnd, onUnlock, disable
         disabled={disabled || !text.trim()}
         onMouseDown={() => onUnlock?.()}
         onTouchStart={() => onUnlock?.()}
+        className="border-2 border-black bg-white text-black hover:bg-black hover:text-white"
       >
         <Send className="h-4 w-4" />
       </Button>

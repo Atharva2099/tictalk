@@ -4,7 +4,9 @@ import re
 
 
 def strip_markdown_for_tts(text: str) -> str:
-    """Remove markdown, tables, and LaTeX so TTS doesn't speak formatting."""
+    """Remove markdown, tables, and LaTeX so TTS doesn't speak formatting.
+    Cartesia SSML tags (<emotion value="..."/> , <speed ratio="..."/> , [laughter]) are
+    intentionally preserved for sonic-3 expressiveness."""
     # LaTeX: remove block math $$...$$ and inline $...$
     text = re.sub(r"\$\$[\s\S]*?\$\$", " ", text)
     text = re.sub(r"\$[^$]+\$", " ", text)
@@ -47,18 +49,19 @@ def strip_markdown_for_tts(text: str) -> str:
 
 
 def extract_sentences(buf: str) -> tuple[list[str], str]:
-    """Extract complete sentences from buffer. Returns (sentences, remainder)."""
+    """Extract complete phrases/sentences from buffer. Splits on .,!?; and newlines
+    for smaller TTS chunks and smoother audio. Returns (phrases, remainder)."""
     result: list[str] = []
     remainder = buf
     while True:
-        m = re.search(r".*?[.!?\n]", remainder, re.DOTALL)
+        m = re.search(r".*?[.!?;\n]", remainder, re.DOTALL)
         if not m:
             break
         s = m.group(0).strip()
         if s:
             result.append(s)
         remainder = remainder[m.end() :].lstrip()
-    if len(remainder) >= 80:
+    if len(remainder) >= 60:
         result.append(remainder.strip())
         remainder = ""
     return result, remainder
