@@ -1,10 +1,10 @@
-# TicTalk - Voice Chat with Cartesia + Claude
+# TicTalk Backend - Cartesia + Claude Voice API
 
-Simple voice chat pipeline: React + shadcn frontend, FastAPI backend. Uses Cartesia Ink for STT, Claude for responses, Cartesia Sonic for TTS.
+FastAPI backend using Cartesia Ink (batch STT), Claude, and Cartesia Sonic TTS.
 
 ## Setup
 
-### Backend
+Python 3.11 or 3.12 required.
 
 ```bash
 cd backend
@@ -12,11 +12,6 @@ uv sync
 cp .env.example .env
 # Edit .env with CARTESIA_API_KEY and ANTHROPIC_API_KEY
 ```
-
-Requires **ffmpeg** for audio conversion (webm -> PCM). Install via:
-
-- macOS: `brew install ffmpeg`
-- Ubuntu: `apt install ffmpeg`
 
 ### Frontend
 
