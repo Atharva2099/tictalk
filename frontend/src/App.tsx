@@ -9,6 +9,17 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 const API_URL = import.meta.env.VITE_API_URL || ""
 const TTS_SAMPLE_RATE = 44100
 
+const SESSION_KEY = "tictalk_session_id"
+
+function getOrCreateSessionId(): string {
+  let id = sessionStorage.getItem(SESSION_KEY)
+  if (!id) {
+    id = crypto.randomUUID()
+    sessionStorage.setItem(SESSION_KEY, id)
+  }
+  return id
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
@@ -110,6 +121,7 @@ function App() {
 
     try {
       const formData = new FormData()
+      formData.append("session_id", getOrCreateSessionId())
       if (audioBlob) {
         formData.append("audio", audioBlob, "recording.webm")
       } else if (text) {
